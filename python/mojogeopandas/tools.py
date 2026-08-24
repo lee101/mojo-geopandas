@@ -11,7 +11,7 @@ import pandas as pd
 import shapely
 from geopandas import GeoDataFrame, GeoSeries
 
-from ._lib import bbox_distance2, bbox_mask
+from ._lib import bbox_distance2, bbox_pairs
 
 _sjoin_mod = importlib.import_module("geopandas.tools.sjoin")
 _overlay_mod = importlib.import_module("geopandas.tools.overlay")
@@ -25,7 +25,9 @@ def _pairs(left: GeoDataFrame, right: GeoDataFrame, predicate: str, distance=Non
         return np.array([], dtype=np.intp), np.array([], dtype=np.intp)
     relation = "contains" if predicate == "contains" else "intersects"
     if predicate == "within":
-        mask = bbox_mask(rb, lb, "contains").T
+        ri, li = bbox_pairs(rb, lb, "contains")
+        order = np.lexsort((ri, li))
+        li, ri = li[order], ri[order]
     else:
         if predicate == "dwithin":
             if distance is None:
@@ -36,8 +38,7 @@ def _pairs(left: GeoDataFrame, right: GeoDataFrame, predicate: str, distance=Non
             lb = lb.copy()
             lb[:, :2] -= d[:, None]
             lb[:, 2:] += d[:, None]
-        mask = bbox_mask(lb, rb, relation)
-    li, ri = np.nonzero(mask)
+        li, ri = bbox_pairs(lb, rb, relation)
     if not len(li):
         return li.astype(np.intp), ri.astype(np.intp)
     a = left.geometry.array.take(li)

@@ -55,7 +55,7 @@ usually replace `geopandas.sjoin`, `geopandas.sjoin_nearest`, or
 GeoDataFrame.geometry.bounds  ->  contiguous float64 (minx, miny, maxx, maxy)
                                       |
                                       v
-src/capi.mojo                 ->  AABB intersects / contains / distance bounds
+src/capi.mojo                 ->  SIMD AABB candidate pairs / distance bounds
                                       |
                                       v
 Shapely                       ->  exact predicate, distance, intersection, difference
@@ -68,10 +68,17 @@ The shared library exports C ABI functions from one Mojo compilation unit.
 `ctypes` passes validated, contiguous float64 NumPy buffers as pointers, and Mojo reconstructs
 `UnsafePointer[Float64, AnyOrigin[mut=True]]` internally. No ownership crosses
 the boundary and the kernel allocates nothing. Empty arrays do not enter the C ABI.
+A two-pass SIMD scan counts and then writes only candidate index pairs, avoiding an
+`nleft * nright` dense mask and its NumPy scan. Pair scans with at least 1,000,000
+AABB comparisons run in parallel; smaller inputs stay serial to avoid launch overhead.
 AABBs are inclusive, so touching
 geometries remain candidates; Shapely always decides the final relation.
 For nearest joins, squared AABB distance is a lower bound that lets the exact
 distance scan stop once no remaining box can improve the current result.
+
+There is no GPU path. The AABB kernels perform only a handful of comparisons per
+32 bytes of bounds loaded, far below the arithmetic intensity needed to amortize
+device transfers, while the expensive GEOS topology operations remain on the CPU.
 
 ## Benchmarks
 
@@ -81,9 +88,9 @@ three runs and include the Python/geometry work but exclude Mojo library load.
 
 | case | mojo-geopandas | geopandas | result |
 | --- | ---: | ---: | --- |
-| `sjoin intersects` (1,600 x 1,600 boxes) | 20.1 ms | 7.3 ms | 0.37x slower |
-| `overlay intersection` (1,600 x 1,600 boxes) | 143.4 ms | 130.4 ms | 0.91x slower |
-| `overlay difference` (1,600 x 1,600 boxes) | 652.9 ms | 754.7 ms | 1.16x faster |
+| `sjoin intersects` (1,600 x 1,600 boxes) | 11.4 ms | 8.5 ms | 0.75x slower |
+| `overlay intersection` (1,600 x 1,600 boxes) | 124.1 ms | 121.7 ms | 0.98x slower |
+| `overlay difference` (1,600 x 1,600 boxes) | 621.5 ms | 745.9 ms | 1.20x faster |
 
 The honest trade-off is visible here: GeoPandas' STRtree is exceptionally good
 for query-only joins, while the Mojo broad phase pays off when an overlay must

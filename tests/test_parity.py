@@ -7,7 +7,7 @@ from geopandas.testing import assert_geodataframe_equal
 from shapely.geometry import LineString, Point, Polygon, box
 
 import mojogeopandas as mgpd
-from mojogeopandas._lib import bbox_distance2, bbox_mask
+from mojogeopandas._lib import bbox_distance2, bbox_mask, bbox_pairs
 
 
 @pytest.fixture
@@ -56,6 +56,27 @@ def test_aabb_simd_tail_matches_numpy():
     assert np.array_equal(bbox_mask(left, right, "intersects"), intersects)
     assert np.array_equal(bbox_mask(left, right, "contains"), contains)
     assert np.array_equal(bbox_distance2(left, right), dx * dx + dy * dy)
+    for relation, expected in (("intersects", intersects), ("contains", contains)):
+        li, ri = bbox_pairs(left, right, relation)
+        expected_li, expected_ri = np.nonzero(expected)
+        assert np.array_equal(li, expected_li)
+        assert np.array_equal(ri, expected_ri)
+
+
+def test_aabb_parallel_pairs_match_numpy():
+    values = np.arange(1001, dtype=np.float64)
+    left = np.column_stack((values, values, values + 1.25, values + 1.25))
+    right = np.column_stack((values + 0.5, values - 0.5, values + 1.5, values + 0.5))
+    expected = (
+        (left[:, None, 0] <= right[None, :, 2])
+        & (right[None, :, 0] <= left[:, None, 2])
+        & (left[:, None, 1] <= right[None, :, 3])
+        & (right[None, :, 1] <= left[:, None, 3])
+    )
+    li, ri = bbox_pairs(left, right, "intersects")
+    expected_li, expected_ri = np.nonzero(expected)
+    assert np.array_equal(li, expected_li)
+    assert np.array_equal(ri, expected_ri)
 
 
 def test_aabb_boundary_validation_and_empty_inputs():

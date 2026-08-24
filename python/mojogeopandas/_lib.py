@@ -17,6 +17,8 @@ _SIGNATURES = {
     "mgpd_bbox_intersects": ([P, P, P, I, I], None),
     "mgpd_bbox_contains": ([P, P, P, I, I], None),
     "mgpd_bbox_distance2": ([P, P, P, I, I], None),
+    "mgpd_bbox_pair_counts": ([P, P, P, I, I, ctypes.c_bool], None),
+    "mgpd_bbox_fill_pairs": ([P, P, P, P, P, I, I, ctypes.c_bool], None),
 }
 
 
@@ -87,3 +89,36 @@ def bbox_distance2(left: np.ndarray, right: np.ndarray) -> np.ndarray:
             left.ctypes.data_as(P), right.ctypes.data_as(P), distances.ctypes.data_as(P), nleft, nright
         )
     return distances
+
+
+def bbox_pairs(left: np.ndarray, right: np.ndarray, relation: str) -> tuple[np.ndarray, np.ndarray]:
+    """Return row-major pairs from the broad phase without a dense mask."""
+    left = _bounds(left, "left")
+    right = _bounds(right, "right")
+    nleft, nright = left.shape[1], right.shape[1]
+    if relation not in {"intersects", "contains"}:
+        raise ValueError(f"unknown AABB relation: {relation}")
+    if not nleft or not nright:
+        empty = np.empty(0, dtype=np.int64)
+        return empty, empty.copy()
+    contains = relation == "contains"
+    counts = np.empty(nleft, dtype=np.int64)
+    library = lib()
+    library.mgpd_bbox_pair_counts(
+        left.ctypes.data_as(P), right.ctypes.data_as(P), counts.ctypes.data_as(P),
+        nleft, nright, contains,
+    )
+    offsets = np.empty(nleft, dtype=np.int64)
+    offsets[0] = 0
+    if nleft > 1:
+        np.cumsum(counts[:-1], out=offsets[1:])
+    size = int(offsets[-1] + counts[-1])
+    left_indices = np.empty(size, dtype=np.int64)
+    right_indices = np.empty(size, dtype=np.int64)
+    if size:
+        library.mgpd_bbox_fill_pairs(
+            left.ctypes.data_as(P), right.ctypes.data_as(P), offsets.ctypes.data_as(P),
+            left_indices.ctypes.data_as(P), right_indices.ctypes.data_as(P),
+            nleft, nright, contains,
+        )
+    return left_indices, right_indices
